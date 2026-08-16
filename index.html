@@ -944,12 +944,12 @@
         const x = el('button', 'del-btn', '✕');
         x.addEventListener('click', async () => {
           p.comments = p.comments.filter((y) => y.id !== c.id);
-          await persistData('delete photo comment').catch(() => {});
           renderLbInteract();
+          try { await persistData('delete photo comment'); } catch (e) { toast('保存失败：' + e.message); }
         });
         line.append(x);
       }
-      row.append(line, el('div', 'c-time', fmtTime(c.ts)));
+      row.append(line, el('div', 'c-time', (c.author ? c.author + ' · ' : '') + fmtTime(c.ts)));
       box.append(row);
     }
     const inputRow = el('div', 'msg-comment-input');
@@ -960,7 +960,7 @@
     btn.addEventListener('click', async () => {
       const text = input.value.trim();
       if (!text) return;
-      p.comments.push({ id: uid(), text, ts: Date.now() });
+      p.comments.push({ id: uid(), text, ts: Date.now(), author: me ? creatorName(me) : '' });
       renderLbInteract();
       try { await persistData('comment photo'); } catch (e) { toast('保存失败：' + e.message); }
     });
@@ -1222,13 +1222,13 @@
         const x = el('button', 'del-btn', '✕');
         x.addEventListener('click', async () => {
           msg.comments = msg.comments.filter((y) => y.id !== c.id);
-          await persistData('delete comment').catch(() => {});
           renderMsgComments(msg, box, commentBtn);
           if (commentBtn) commentBtn.textContent = '💬 ' + msg.comments.length;
+          try { await persistData('delete comment'); } catch (e) { toast('保存失败：' + e.message); }
         });
         line.append(x);
       }
-      row.append(line, el('div', 'c-time', fmtTime(c.ts)));
+      row.append(line, el('div', 'c-time', (c.author ? c.author + ' · ' : '') + fmtTime(c.ts)));
       box.append(row);
     }
     const inputRow = el('div', 'msg-comment-input');
@@ -1239,7 +1239,7 @@
     btn.addEventListener('click', async () => {
       const text = input.value.trim();
       if (!text) return toast('评论不能为空');
-      msg.comments.push({ id: uid(), text, ts: Date.now() });
+      msg.comments.push({ id: uid(), text, ts: Date.now(), author: me ? creatorName(me) : '' });
       renderMsgComments(msg, box, commentBtn);
       if (commentBtn) commentBtn.textContent = '💬 ' + msg.comments.length;
       try { await persistData('comment message'); } catch (e) { toast('保存失败：' + e.message); }
