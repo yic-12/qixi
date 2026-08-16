@@ -970,13 +970,15 @@
         if (!text) return toast('写点什么吧～');
         btn.disabled = true;
         try {
-          const data = dbCache || await readData();
-          data.timeline.push({ id: uid(), text, date: dateIn.value, ts: Date.now() });
-          await writeData(data, 'add timeline');
+          const item = { id: uid(), text, date: dateIn.value, ts: Date.now() };
           ta.value = '';
-          await loadAll();
+          timeline.unshift(item);
+          if (dbCache) dbCache.timeline.push(item);
+          S.counts.timeline = timeline.length;
           toast('已添加');
-        } catch (e) { toast(e.message); }
+          renderTimeline();
+          await persistData('add timeline');
+        } catch (e) { toast('保存失败：' + e.message); await loadAll().catch(() => {}); }
         finally { btn.disabled = false; }
       });
       add.append(dateIn, ta, btn);
@@ -1019,13 +1021,13 @@
 
   async function deleteTimeline(item) {
     if (!confirm('删除这条记录吗？')) return;
-    try {
-      const data = dbCache || await readData();
-      data.timeline = data.timeline.filter((x) => x.id !== item.id);
-      await writeData(data, 'delete timeline');
-      await loadAll();
-      toast('已删除');
-    } catch (e) { toast(e.message); }
+    timeline = timeline.filter((x) => x.id !== item.id);
+    if (dbCache) dbCache.timeline = dbCache.timeline.filter((x) => x.id !== item.id);
+    S.counts.timeline = timeline.length;
+    toast('已删除');
+    renderTimeline();
+    try { await persistData('delete timeline'); }
+    catch (e) { toast('删除同步失败：' + e.message); await loadAll().catch(() => {}); }
   }
 
   /* ---------------- 清单 ---------------- */
@@ -1046,13 +1048,15 @@
         if (!text) return toast('写点什么吧～');
         btn.disabled = true;
         try {
-          const data = dbCache || await readData();
-          data.checklist.push({ id: uid(), text, done: false, ts: Date.now() });
-          await writeData(data, 'add checklist');
+          const item = { id: uid(), text, done: false, ts: Date.now() };
           inp.value = '';
-          await loadAll();
+          checklist.unshift(item);
+          if (dbCache) dbCache.checklist.push(item);
+          S.counts.checklist = checklist.length;
           toast('已添加');
-        } catch (e) { toast(e.message); }
+          renderChecklist();
+          await persistData('add checklist');
+        } catch (e) { toast('保存失败：' + e.message); await loadAll().catch(() => {}); }
         finally { btn.disabled = false; }
       });
       inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') btn.click(); });
@@ -1071,6 +1075,7 @@
     const ul = el('ul', 'checklist');
     for (const item of checklist) {
       const li = el('li', 'cl-item' + (item.done ? ' done' : ''));
+      li.dataset.id = item.id;
       const circle = el('div', 'cl-circle', item.done ? '✓' : '');
       li.append(circle, el('span', 'cl-text', item.text));
       if (me) {
@@ -1085,23 +1090,26 @@
   }
 
   async function toggleChecklist(item) {
-    try {
-      const data = dbCache || await readData();
-      const x = data.checklist.find((o) => o.id === item.id);
-      if (x) x.done = !x.done;
-      await writeData(data, 'toggle checklist');
-      await loadAll();
-    } catch (e) { toast(e.message); }
+    item.done = !item.done;
+    // 立即更新划线效果（不整页刷新）
+    const li = view.querySelector('.cl-item[data-id="' + item.id + '"]');
+    if (li) {
+      li.classList.toggle('done', item.done);
+      const c = li.querySelector('.cl-circle');
+      if (c) c.textContent = item.done ? '✓' : '';
+    }
+    try { await persistData('toggle checklist'); }
+    catch (e) { toast('保存失败：' + e.message); await loadAll().catch(() => {}); }
   }
   async function deleteChecklist(item) {
     if (!confirm('删除这条清单吗？')) return;
-    try {
-      const data = dbCache || await readData();
-      data.checklist = data.checklist.filter((x) => x.id !== item.id);
-      await writeData(data, 'delete checklist');
-      await loadAll();
-      toast('已删除');
-    } catch (e) { toast(e.message); }
+    checklist = checklist.filter((x) => x.id !== item.id);
+    if (dbCache) dbCache.checklist = dbCache.checklist.filter((x) => x.id !== item.id);
+    S.counts.checklist = checklist.length;
+    toast('已删除');
+    renderChecklist();
+    try { await persistData('delete checklist'); }
+    catch (e) { toast('删除同步失败：' + e.message); await loadAll().catch(() => {}); }
   }
 
   /* ---------------- 留言板 ---------------- */
