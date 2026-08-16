@@ -310,6 +310,17 @@
   }
   .msg-time { font-size: 11px; color: var(--muted); }
   .msg-text { font-size: 15px; line-height: 1.75; white-space: pre-wrap; word-break: break-word; }
+  .msg-actions { display: flex; border-top: 1px solid var(--line); margin-top: 10px; }
+  .msg-action { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 0; background: none; border: none; color: var(--muted); font-size: 13px; font-family: inherit; border-radius: 10px; }
+  .msg-action:active { background: var(--line); }
+  .msg-action.liked { color: var(--accent); font-weight: 700; }
+  .msg-comments { border-top: 1px solid var(--line); padding: 8px 2px; display: none; }
+  .msg-comments.open { display: block; }
+  .msg-comment { font-size: 13px; padding: 6px 4px; border-bottom: 1px dashed var(--line); line-height: 1.6; }
+  .msg-comment .c-time { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .msg-comment-input { display: flex; gap: 8px; margin-top: 8px; }
+  .msg-comment-input input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 999px; padding: 8px 12px; font-size: 13px; font-family: inherit; outline: none; background: #faf9f9; }
+  .msg-comment-input .btn { padding: 8px 14px; font-size: 13px; }
 
   /* 管理 */
   .admin-card {
@@ -459,6 +470,8 @@
   let tab = 'home';
   let loginWho = 'his';
   let dbCache = null;              // 本地数据缓存（操作秒响应，后台再刷新）
+  let visitorId = localStorage.getItem('gh_visitor');
+  if (!visitorId) { visitorId = 'v' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); localStorage.setItem('gh_visitor', visitorId); }
 
   /* ---------------- GitHub 数据层（网页 + 数据全在 GitHub） ---------------- */
   // ⚠️ 部署前必改：填你的 GitHub 信息和令牌
@@ -528,16 +541,37 @@
   }
 
   // 读全部数据
+  let dbSha = null;   // data.json 当前 sha（写前不必再读，速度快一倍）
   async function readData() {
     const f = await ghRead(DATA_PATH);
-    if (!f) return defaultData();
+    if (!f) { dbSha = null; return defaultData(); }
+    dbSha = f.sha;
     try { return Object.assign(defaultData(), JSON.parse(f.text)); } catch (e) { return defaultData(); }
   }
 
-  // 写全部数据（把改动存回 data.json）
+  // 写全部数据（用缓存的 sha，避免每次写前都读一次）
   async function writeData(data, message) {
-    const f = await ghRead(DATA_PATH);
-    await ghWrite(DATA_PATH, b64Encode(JSON.stringify(data)), f ? f.sha : null, message || 'update data');
+    let sha = dbSha;
+    if (!sha) {
+      const f = await ghRead(DATA_PATH);
+      sha = f ? f.sha : null;
+    }
+    try {
+      const r = await ghWrite(DATA_PATH, b64Encode(JSON.stringify(data)), sha, message || 'update data');
+      if (r && r.content) dbSha = r.content.sha;
+      return r;
+    } catch (e) {
+      const f = await ghRead(DATA_PATH);
+      const r2 = await ghWrite(DATA_PATH, b64Encode(JSON.stringify(data)), f ? f.sha : null, message || 'update data');
+      if (r2 && r2.content) dbSha = r2.content.sha;
+      return r2;
+    }
+  }
+
+  // 快速保存：直接用本地缓存写入（不等网络、不整页刷新）
+  async function persistData(message) {
+    if (!dbCache) dbCache = await readData();
+    await writeData(dbCache, message || 'update');
   }
 
   // 密码哈希（浏览器 Web Crypto）
@@ -1023,15 +1057,63 @@
       const item = el('div', 'msg-item');
       const head2 = el('div', 'msg-head');
       head2.append(el('span', 'msg-nick', msg.nickname), el('span', 'msg-time', fmtTime(msg.ts)));
-      item.append(head2, el('div', 'msg-text', msg.text));
       if (me) {
         const d = el('button', 'del-btn', '✕ 删除');
         d.addEventListener('click', () => deleteMessage(msg));
         head2.append(d);
       }
+      item.append(head2, el('div', 'msg-text', msg.text));
+
+      // 点赞 + 评论
+      const likes = msg.likes || (msg.likes = []);
+      const comments = msg.comments || (msg.comments = []);
+      const actions = el('div', 'msg-actions');
+      const likeBtn = el('button', 'msg-action' + (likes.indexOf(visitorId) >= 0 ? ' liked' : ''), '❤️ ' + likes.length);
+      likeBtn.addEventListener('click', () => toggleMsgLike(msg, likeBtn));
+      const commentBtn = el('button', 'msg-action', '💬 ' + comments.length);
+      const commentsBox = el('div', 'msg-comments');
+      commentBtn.addEventListener('click', () => commentsBox.classList.toggle('open'));
+      renderMsgComments(msg, commentsBox, commentBtn);
+      actions.append(likeBtn, commentBtn);
+      item.append(actions, commentsBox);
+
       ul.append(item);
     }
     view.append(ul);
+  }
+
+  function renderMsgComments(msg, box, commentBtn) {
+    box.innerHTML = '';
+    for (const c of msg.comments || []) {
+      const row = el('div', 'msg-comment');
+      row.append(el('div', null, c.text), el('div', 'c-time', fmtTime(c.ts)));
+      box.append(row);
+    }
+    const inputRow = el('div', 'msg-comment-input');
+    const input = document.createElement('input');
+    input.placeholder = '写下评论…';
+    input.maxLength = 200;
+    const btn = el('button', 'btn', '发送');
+    btn.addEventListener('click', async () => {
+      const text = input.value.trim();
+      if (!text) return toast('评论不能为空');
+      msg.comments.push({ id: uid(), text, ts: Date.now() });
+      await persistData('comment message').catch(() => {});
+      renderMsgComments(msg, box, commentBtn);
+      if (commentBtn) commentBtn.textContent = '💬 ' + msg.comments.length;
+    });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); btn.click(); } });
+    inputRow.append(input, btn);
+    box.append(inputRow);
+  }
+
+  async function toggleMsgLike(msg, likeBtn) {
+    const likes = msg.likes || (msg.likes = []);
+    const i = likes.indexOf(visitorId);
+    if (i >= 0) likes.splice(i, 1); else likes.push(visitorId);
+    await persistData('like message').catch(() => {});
+    likeBtn.textContent = '❤️ ' + likes.length;
+    likeBtn.classList.toggle('liked', i < 0);
   }
 
   async function submitMessage(e) {
@@ -1040,25 +1122,28 @@
     const text = view.querySelector('.msg-form textarea').value.trim();
     if (!nick) return toast('请留下昵称');
     if (!text) return toast('留言内容不能为空');
-    try {
-      const data = dbCache || await readData();
-      data.messages.push({ id: uid(), nickname: nick, text, ts: Date.now() });
-      await writeData(data, 'new message');
-      view.querySelector('.msg-form textarea').value = '';
-      await loadAll();
-      toast('留言已送出 💌');
-    } catch (err) { toast(err.message); }
+    const msg = { id: uid(), nickname: nick, text, ts: Date.now(), likes: [], comments: [] };
+    // 立即显示（不等网络）
+    view.querySelector('.msg-form textarea').value = '';
+    messages.unshift(msg);
+    if (dbCache) dbCache.messages.push(msg);
+    S.counts.messages = messages.length;
+    toast('留言已送出 💌');
+    renderMessages();
+    // 后台静默保存
+    try { await persistData('new message'); }
+    catch (err) { toast('保存失败：' + err.message); await loadAll().catch(() => {}); }
   }
 
   async function deleteMessage(msg) {
     if (!confirm('删除这条留言吗？')) return;
-    try {
-      const data = dbCache || await readData();
-      data.messages = data.messages.filter((x) => x.id !== msg.id);
-      await writeData(data, 'delete message');
-      await loadAll();
-      toast('已删除');
-    } catch (e) { toast(e.message); }
+    messages = messages.filter((x) => x.id !== msg.id);
+    if (dbCache) dbCache.messages = dbCache.messages.filter((x) => x.id !== msg.id);
+    S.counts.messages = messages.length;
+    toast('已删除');
+    renderMessages();
+    try { await persistData('delete message'); }
+    catch (e) { toast('删除同步失败：' + e.message); await loadAll().catch(() => {}); }
   }
 
   /* ---------------- 管理后台 ---------------- */
