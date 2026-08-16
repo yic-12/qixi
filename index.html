@@ -166,8 +166,8 @@
     right: -14px; bottom: -26px; transform: rotate(12deg);
   }
   .timer-labels { font-size: 13px; color: #b98a99; margin-bottom: 12px; letter-spacing: 1px; }
-  .timer-big { font-size: 22px; font-weight: 700; }
-  .timer-big b { color: var(--accent-deep); font-size: 34px; padding: 0 2px; font-variant-numeric: tabular-nums; }
+  .timer-big { font-size: 18px; font-weight: 700; }
+  .timer-big b { color: var(--accent-deep); font-size: 26px; padding: 0 2px; font-variant-numeric: tabular-nums; }
   .timer-clock {
     font-size: 40px; font-weight: 800; letter-spacing: 3px; margin: 10px 0 8px;
     font-variant-numeric: tabular-nums;
@@ -705,10 +705,7 @@
     const body = el('div');
     body.append(el('div', 'timer-labels', '我们已经在一起'));
     body.append(el('div', 'timer-big', null));
-    body.lastChild.append(el('b', null, '0'), document.createTextNode('年 '), el('b', null, '0'), document.createTextNode('个月 '), el('b', null, '0'), document.createTextNode('天'));
-    body.append(el('div', 'timer-clock', '00:00:00'));
-    body.append(el('div', 'timer-total', null));
-    body.lastChild.append('累计 '); body.lastChild.append(el('b', null, '0')); body.lastChild.append(' 天');
+    body.lastChild.append(el('b', null, '0'), document.createTextNode('天 '), el('b', null, '0'), document.createTextNode('时 '), el('b', null, '0'), document.createTextNode('分 '), el('b', null, '0'), document.createTextNode('秒'));
     timerCard.append(body);
     view.append(timerCard);
 
@@ -741,24 +738,15 @@
       timerCard.hidden = false;
       cd2.hidden = false;
       const nums = body.querySelectorAll('.timer-big b');
-      const clock = body.querySelector('.timer-clock');
-      const total = body.querySelector('.timer-total b');
       const tick = () => {
         const start = parseDate(s.startDate);
         if (!start) return;
         const now = new Date();
-        let years = now.getFullYear() - start.getFullYear();
-        let months = now.getMonth() - start.getMonth();
-        let days = now.getDate() - start.getDate();
-        if (days < 0) { months--; days += new Date(now.getFullYear(), now.getMonth(), 0).getDate(); }
-        if (months < 0) { years--; months += 12; }
         const ms = now - start;
-        const h = Math.floor(ms / 3600000) % 24;
-        const mi = Math.floor(ms / 60000) % 60;
-        const sec = Math.floor(ms / 1000) % 60;
-        nums[0].textContent = years; nums[1].textContent = months; nums[2].textContent = days;
-        clock.textContent = pad(h) + ':' + pad(mi) + ':' + pad(sec);
-        total.textContent = Math.floor(ms / 86400000);
+        nums[0].textContent = Math.floor(ms / 86400000);          // 天
+        nums[1].textContent = Math.floor(ms / 3600000) % 24;      // 时
+        nums[2].textContent = Math.floor(ms / 60000) % 60;        // 分
+        nums[3].textContent = Math.floor(ms / 1000) % 60;         // 秒
         const q = nextQixi(now);
         cd1.querySelector('.cd-num').textContent = q ? daysUntil(now, q) : '--';
         const anni = nextAnniversary(start, now);
