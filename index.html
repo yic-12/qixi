@@ -310,6 +310,19 @@
   }
   .msg-time { font-size: 11px; color: var(--muted); }
   .msg-text { font-size: 15px; line-height: 1.75; white-space: pre-wrap; word-break: break-word; }
+  .msg-comment .c-line { display: flex; align-items: flex-start; gap: 6px; }
+  .msg-comment .c-line div:first-child { flex: 1; }
+  .msg-comment .del-btn { font-size: 11px; padding: 2px 4px; }
+  .tl-like { background: none; border: none; color: var(--muted); font-size: 13px; padding: 6px 4px; border-radius: 8px; font-family: inherit; }
+  .tl-like.liked { color: var(--accent); font-weight: 700; }
+  .lb-like-row { display: flex; align-items: center; gap: 12px; margin-top: 14px; width: 100%; max-width: 420px; }
+  .lb-like-row .msg-action { color: #ffdce6; }
+  .lb-like-row .msg-action.liked { color: #ff6f9c; }
+  .lb-comments { width: 100%; max-width: 420px; max-height: 32vh; overflow-y: auto; margin-top: 12px; }
+  .lightbox .msg-comment { color: #f0d9e0; border-color: rgba(255,255,255,.15); }
+  .lightbox .msg-comment .c-time { color: rgba(255,255,255,.5); }
+  .lightbox .msg-comment-input input { background: rgba(255,255,255,.15); color: #fff; border-color: rgba(255,255,255,.25); }
+  .lightbox .msg-comment-input input::placeholder { color: rgba(255,255,255,.5); }
   .msg-actions { display: flex; border-top: 1px solid var(--line); margin-top: 10px; }
   .msg-action { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 0; background: none; border: none; color: var(--muted); font-size: 13px; font-family: inherit; border-radius: 10px; }
   .msg-action:active { background: var(--line); }
@@ -451,6 +464,11 @@
   <button class="lb-close" id="lbClose">✕</button>
   <img id="lbImg" alt="">
   <div class="lb-caption" id="lbCaption"></div>
+  <div class="lb-like-row">
+    <button class="msg-action" id="lbLikeBtn">❤️ 0</button>
+    <button class="msg-action" id="lbCommentsHint">💬 0</button>
+  </div>
+  <div class="lb-comments" id="lbComments"></div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -572,6 +590,13 @@
   async function persistData(message) {
     if (!dbCache) dbCache = await readData();
     await writeData(dbCache, message || 'update');
+  }
+
+  // 访客点赞切换（返回是否已赞）
+  function toggleVisitorLike(arr) {
+    const i = arr.indexOf(visitorId);
+    if (i >= 0) arr.splice(i, 1); else arr.push(visitorId);
+    return i < 0;
   }
 
   // 密码哈希（浏览器 Web Crypto）
@@ -846,7 +871,7 @@
         img.src = p.url;
         img.alt = p.caption || '';
         img.loading = 'lazy';
-        img.addEventListener('click', () => openLightbox(p.url, p.caption || ''));
+        img.addEventListener('click', () => openLightbox(p));
         item.append(img);
         if (me) {
           const d = el('button', 'p-del', '✕');
@@ -861,10 +886,56 @@
     }
   }
 
-  function openLightbox(src, caption) {
-    $('#lbImg').src = src;
-    $('#lbCaption').textContent = caption || '';
+  let lbPhoto = null;   // 当前灯箱显示的照片
+  function openLightbox(p) {
+    lbPhoto = p || null;
+    $('#lbImg').src = p.url;
+    $('#lbCaption').textContent = p.caption || '';
+    renderLbInteract();
     $('#lightbox').hidden = false;
+  }
+
+  function renderLbInteract() {
+    const p = lbPhoto;
+    if (!p) return;
+    const likes = p.likes || (p.likes = []);
+    const comments = p.comments || (p.comments = []);
+    $('#lbLikeBtn').textContent = '❤️ ' + likes.length;
+    $('#lbLikeBtn').classList.toggle('liked', likes.indexOf(visitorId) >= 0);
+    $('#lbCommentsHint').textContent = '💬 ' + comments.length;
+    const box = $('#lbComments');
+    box.innerHTML = '';
+    for (const c of comments) {
+      const row = el('div', 'msg-comment');
+      const line = el('div', 'c-line');
+      line.append(el('div', null, c.text));
+      if (me) {
+        const x = el('button', 'del-btn', '✕');
+        x.addEventListener('click', async () => {
+          p.comments = p.comments.filter((y) => y.id !== c.id);
+          await persistData('delete photo comment').catch(() => {});
+          renderLbInteract();
+        });
+        line.append(x);
+      }
+      row.append(line, el('div', 'c-time', fmtTime(c.ts)));
+      box.append(row);
+    }
+    const inputRow = el('div', 'msg-comment-input');
+    const input = document.createElement('input');
+    input.placeholder = '写下评论…';
+    input.maxLength = 200;
+    const btn = el('button', 'btn', '发送');
+    btn.addEventListener('click', async () => {
+      const text = input.value.trim();
+      if (!text) return;
+      p.comments.push({ id: uid(), text, ts: Date.now() });
+      await persistData('comment photo').catch(() => {});
+      renderLbInteract();
+    });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); btn.click(); } });
+    inputRow.append(input, btn);
+    box.append(inputRow);
   }
 
   async function deletePhoto(p) {
@@ -926,6 +997,15 @@
       row.append(el('div', 'tl-date', item.date.replace(/-/g, '.')));
       const inner = el('div', 'tl-row');
       inner.append(el('div', 'tl-text', item.text));
+      const tLikes = item.likes || (item.likes = []);
+      const tLikeBtn = el('button', 'tl-like' + (tLikes.indexOf(visitorId) >= 0 ? ' liked' : ''), '❤️ ' + tLikes.length);
+      tLikeBtn.addEventListener('click', () => {
+        const nowLiked = toggleVisitorLike(tLikes);
+        tLikeBtn.textContent = '❤️ ' + tLikes.length;
+        tLikeBtn.classList.toggle('liked', nowLiked);
+        persistData('like timeline').catch(() => {});
+      });
+      inner.append(tLikeBtn);
       if (me) {
         const d = el('button', 'del-btn', '✕');
         d.addEventListener('click', () => deleteTimeline(item));
@@ -1086,7 +1166,19 @@
     box.innerHTML = '';
     for (const c of msg.comments || []) {
       const row = el('div', 'msg-comment');
-      row.append(el('div', null, c.text), el('div', 'c-time', fmtTime(c.ts)));
+      const line = el('div', 'c-line');
+      line.append(el('div', null, c.text));
+      if (me) {
+        const x = el('button', 'del-btn', '✕');
+        x.addEventListener('click', async () => {
+          msg.comments = msg.comments.filter((y) => y.id !== c.id);
+          await persistData('delete comment').catch(() => {});
+          renderMsgComments(msg, box, commentBtn);
+          if (commentBtn) commentBtn.textContent = '💬 ' + msg.comments.length;
+        });
+        line.append(x);
+      }
+      row.append(line, el('div', 'c-time', fmtTime(c.ts)));
       box.append(row);
     }
     const inputRow = el('div', 'msg-comment-input');
@@ -1396,6 +1488,15 @@
   $('#loginPw').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
   $('#loginCancel').addEventListener('click', () => { $('#loginModal').hidden = true; });
   $('#lbClose').addEventListener('click', () => { $('#lightbox').hidden = true; });
+  $('#lbLikeBtn').addEventListener('click', () => {
+    const p = lbPhoto;
+    if (!p) return;
+    const likes = p.likes || (p.likes = []);
+    const nowLiked = toggleVisitorLike(likes);
+    $('#lbLikeBtn').textContent = '❤️ ' + likes.length;
+    $('#lbLikeBtn').classList.toggle('liked', nowLiked);
+    persistData('like photo').catch(() => {});
+  });
   $('#lightbox').addEventListener('click', (e) => { if (e.target === $('#lightbox')) $('#lightbox').hidden = true; });
 
   /* ---------------- 漂浮爱心 ---------------- */
