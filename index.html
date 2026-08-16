@@ -782,7 +782,7 @@
   function renderPhotos() {
     view.innerHTML = '';
     const head = el('div', 'section-head');
-    head.append(el('h2', null, '恋爱相册'), el('span', null, photos.length + ' 张'));
+    head.append(el('h2', 'tl-title', '着迷于你眼睛，银河有迹可循'), el('span', null, photos.length + ' 张'));
     view.append(head);
 
     if (!photos.length) {
