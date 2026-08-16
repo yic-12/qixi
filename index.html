@@ -994,7 +994,7 @@
   function renderMessages() {
     view.innerHTML = '';
     const head = el('div', 'section-head');
-    head.append(el('h2', null, '留言板'), el('span', null, '想对我们说的话'));
+    head.append(el('h2', 'tl-title', '我遇见谁，会有怎样的对白'));
     view.append(head);
 
     const form = el('form', 'msg-form');
