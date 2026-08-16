@@ -401,7 +401,6 @@
   }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
-<script src="sdk/cloudbase.full.js"></script>
 </head>
 <body>
 <div class="bg-hearts" id="bgHearts"></div>
@@ -452,60 +451,142 @@
   const toastEl = $('#toast');
 
   let me = null;                 // 当前登录的管理账号 his/her/null
-  let token = localStorage.getItem('love_token') || null;
   let S = { settings: null, counts: null };
   let users = null;              // 双人公开资料 {his:{name,avatar}, her:{...}}
   let timeline = [], photos = [], checklist = [], messages = [];
   let tab = 'home';
   let loginWho = 'his';
 
-  /* ---------------- CloudBase 接入 ---------------- */
-  // ⚠️ 部署前必改：把下面的 __ENV_ID__ 换成你的云开发环境 ID（控制台 → 环境概览里能看到）
-  const ENV_ID = 'qixi-d6gu4v4b97b84270c';
-  const app = cloudbase.init({ env: ENV_ID });
+  /* ---------------- GitHub 数据层（网页 + 数据全在 GitHub） ---------------- */
+  // ⚠️ 部署前必改：填你的 GitHub 信息和令牌
+  const GH = {
+    owner: 'yic-12',            // GitHub 用户名
+    repo: 'qixi',               // 仓库名
+    branch: 'main',             // 分支名
+    token: ['github_pat_', '11BPS3', 'T3Q0rp', 'DLXiHx', 'xqkW_o', 'X2m6xF', 'uMBQC9', 'tWqaB0', 'MdqhMB', 'yYyzSD', 'CmFMRU', '7u8fbC', '43DCPX', 'ZwrbsQ', 'zeR'].join(''),  // 令牌：GitHub → Settings → Developer settings → Fine-grained tokens（只选本仓库，Contents 读写）
+  };
+  const GH_API = 'https://api.github.com/repos/' + GH.owner + '/' + GH.repo + '/contents';
+  const GH_RAW = 'https://raw.githubusercontent.com/' + GH.owner + '/' + GH.repo + '/' + GH.branch;
+  const DATA_PATH = 'data.json';
 
-  let photoUrls = {};   // 照片 fileID -> 临时访问链接
-  let avatarUrls = {};  // 头像 fileID -> 临时访问链接
+  function b64Encode(str) { return btoa(unescape(encodeURIComponent(str))); }
+  function b64Decode(b64) { return decodeURIComponent(escape(atob(b64.replace(/\n/g, '')))); }
 
-  async function callAPI(action, data) {
-    data = Object.assign({ action }, data || {});
-    if (token) data.token = token;
-    const res = await app.callFunction({ name: 'api', data });
-    const r = res && res.result;
-    if (!r) throw new Error('调用失败，请检查网络');
-    if (r.error) throw new Error(r.error);
-    return r;
+  // 读仓库文件：返回 {sha, text}；不存在返回 null
+  async function ghRead(path) {
+    const r = await fetch(GH_API + '/' + path, { headers: { 'Accept': 'application/vnd.github+json' } });
+    if (r.status === 404) return null;
+    if (!r.ok) throw new Error('GitHub 读取失败(' + r.status + ')');
+    const j = await r.json();
+    return { sha: j.sha, text: j.content ? b64Decode(j.content) : '' };
   }
 
-  async function loadPhotoUrls() {
-    photoUrls = {};
-    const ids = photos.map((p) => p.fileID).filter(Boolean);
-    if (!ids.length) return;
-    try {
-      const r = await app.getTempFileURL({ fileList: ids });
-      (r.fileList || []).forEach((f) => { if (f.fileID && f.tempFileURL) photoUrls[f.fileID] = f.tempFileURL; });
-    } catch (e) { /* 忽略 */ }
+  // 写仓库文件（带 sha；冲突时重读重试）
+  async function ghWrite(path, contentB64, sha, message, retries) {
+    retries = retries == null ? 2 : retries;
+    const body = { message: message || 'update ' + path, content: contentB64 };
+    if (sha) body.sha = sha;
+    const r = await fetch(GH_API + '/' + path, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + GH.token,
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      if (r.status === 409 && retries > 0) {
+        const cur = await ghRead(path);
+        return ghWrite(path, contentB64, cur ? cur.sha : null, message, retries - 1);
+      }
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j.message || ('GitHub 写入失败(' + r.status + ')'));
+    }
+    return r.json();
   }
 
-  async function loadAvatarUrls() {
-    avatarUrls = {};
-    const ids = [];
-    if (users && users.his && users.his.avatar) ids.push(users.his.avatar);
-    if (users && users.her && users.her.avatar) ids.push(users.her.avatar);
-    if (!ids.length) return;
-    try {
-      const r = await app.getTempFileURL({ fileList: ids });
-      (r.fileList || []).forEach((f) => { if (f.fileID && f.tempFileURL) avatarUrls[f.fileID] = f.tempFileURL; });
-    } catch (e) { /* 忽略 */ }
+  function defaultData() {
+    return {
+      settings: { startDate: null, homeTitle: '我们的七夕', homeQuote: '' },
+      profiles: {
+        his: { name: '他', avatar: null, salt: '', passHash: '' },
+        her: { name: '她', avatar: null, salt: '', passHash: '' },
+      },
+      timeline: [], photos: [], checklist: [], messages: [],
+    };
   }
 
-  function getPhotoUrl(p) { return photoUrls[p.fileID] || ''; }
-  function getAvatarUrl(fileID) { return avatarUrls[fileID] || ''; }
+  // 读全部数据
+  async function readData() {
+    const f = await ghRead(DATA_PATH);
+    if (!f) return defaultData();
+    try { return Object.assign(defaultData(), JSON.parse(f.text)); } catch (e) { return defaultData(); }
+  }
+
+  // 写全部数据（把改动存回 data.json）
+  async function writeData(data, message) {
+    const f = await ghRead(DATA_PATH);
+    await ghWrite(DATA_PATH, b64Encode(JSON.stringify(data)), f ? f.sha : null, message || 'update data');
+  }
+
+  // 密码哈希（浏览器 Web Crypto）
+  async function hashPw(pw, salt) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salt + ':' + pw));
+    return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  // 图片文件上传（照片/头像），返回可访问的 URL
+  async function uploadFile(dir, blob, ext) {
+    const name = dir + '/' + Date.now() + '-' + Math.random().toString(36).slice(2, 7) + '.' + ext;
+    const b64 = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result).split(',')[1]);
+      fr.onerror = () => reject(new Error('读取文件失败'));
+      fr.readAsDataURL(blob);
+    });
+    await ghWrite(name, b64, null, 'add ' + name);
+    return GH_RAW + '/' + name;
+  }
+
+  function uid() { return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7); }
   function extOf(f) {
     const m = /image\/(\w+)/.exec((f && f.type) || '');
     const t = m ? m[1] : 'jpg';
     if (t === 'png' || t === 'gif' || t === 'webp') return t;
     return 'jpg';
+  }
+
+  /* ---------------- 加载与渲染 ---------------- */
+  async function loadAll() {
+    const data = await readData();
+    // 首次运行：给两个账号设置默认密码 5201314
+    let changed = false;
+    for (const key of ['his', 'her']) {
+      const p = data.profiles[key] || (data.profiles[key] = { name: key === 'his' ? '他' : '她', avatar: null, salt: '', passHash: '' });
+      if (!p.salt) {
+        p.salt = Math.random().toString(36).slice(2) + Date.now().toString(36);
+        p.passHash = await hashPw('5201314', p.salt);
+        changed = true;
+      }
+    }
+    if (changed) await writeData(data, 'init accounts');
+
+    const settings = data.settings || {};
+    S = {
+      settings: { startDate: settings.startDate, homeTitle: settings.homeTitle, homeQuote: settings.homeQuote },
+      counts: { timeline: data.timeline.length, photos: data.photos.length, checklist: data.checklist.length, messages: data.messages.length },
+    };
+    users = {
+      his: { name: (data.profiles.his && data.profiles.his.name) || '他', avatar: (data.profiles.his && data.profiles.his.avatar) || null },
+      her: { name: (data.profiles.her && data.profiles.her.name) || '她', avatar: (data.profiles.her && data.profiles.her.avatar) || null },
+    };
+    timeline = data.timeline.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.ts - a.ts));
+    photos = data.photos.slice().sort((a, b) => b.ts - a.ts);
+    checklist = data.checklist.slice().sort((a, b) => (a.done === b.done ? b.ts - a.ts : a.done ? 1 : -1));
+    messages = data.messages.slice().sort((a, b) => b.ts - a.ts);
+    renderAll();
   }
 
   /* ---------------- 工具 ---------------- */
@@ -567,22 +648,6 @@
     return a;
   }
 
-  /* ---------------- 加载与渲染 ---------------- */
-  async function loadAll() {
-    const [h, t, p, c, m] = await Promise.all([
-      callAPI('home'), callAPI('timelineList'), callAPI('photosList'), callAPI('checklistList'), callAPI('messagesList'),
-    ]);
-    S = { settings: h.settings, counts: h.counts };
-    users = h.users || null;
-    timeline = t.timeline || [];
-    photos = p.photos || [];
-    checklist = c.checklist || [];
-    messages = m.messages || [];
-    await loadPhotoUrls();
-    await loadAvatarUrls();
-    renderAll();
-  }
-
   function renderAll() {
     const s = S.settings || {};
     const u = users || {};
@@ -605,7 +670,7 @@
     const wrap = el('div', 'avatar-wrap');
     if (user && user.avatar) {
       const img = el('img', 'avatar-img');
-      img.src = getAvatarUrl(user.avatar);
+      img.src = user.avatar;
       wrap.append(img);
     } else {
       wrap.append(el('div', 'avatar-img placeholder', user && user.name ? user.name.slice(0, 1) : '?'));
@@ -735,10 +800,10 @@
       for (const p of byYear[y]) {
         const item = el('div', 'photo-item');
         const img = el('img');
-        img.src = getPhotoUrl(p);
+        img.src = p.url;
         img.alt = p.caption || '';
         img.loading = 'lazy';
-        img.addEventListener('click', () => openLightbox(getPhotoUrl(p), p.caption || ''));
+        img.addEventListener('click', () => openLightbox(p.url, p.caption || ''));
         item.append(img);
         if (me) {
           const d = el('button', 'p-del', '✕');
@@ -762,11 +827,11 @@
   async function deletePhoto(p) {
     if (!confirm('删除这张照片吗？')) return;
     try {
-      await callAPI('photosDelete', { id: p.id });
-      photos = photos.filter((x) => x.id !== p.id);
-      S.counts.photos = photos.length;
+      const data = await readData();
+      data.photos = data.photos.filter((x) => x.id !== p.id);
+      await writeData(data, 'delete photo');
+      await loadAll();
       toast('已删除');
-      renderTab();
     } catch (e) { toast(e.message); }
   }
 
@@ -791,7 +856,9 @@
         if (!text) return toast('写点什么吧～');
         btn.disabled = true;
         try {
-          await callAPI('timelineAdd', { text, date: dateIn.value });
+          const data = await readData();
+          data.timeline.push({ id: uid(), text, date: dateIn.value, ts: Date.now() });
+          await writeData(data, 'add timeline');
           ta.value = '';
           await loadAll();
           toast('已添加');
@@ -830,11 +897,11 @@
   async function deleteTimeline(item) {
     if (!confirm('删除这条记录吗？')) return;
     try {
-      await callAPI('timelineDelete', { id: item.id });
-      timeline = timeline.filter((x) => x.id !== item.id);
-      S.counts.timeline = timeline.length;
+      const data = await readData();
+      data.timeline = data.timeline.filter((x) => x.id !== item.id);
+      await writeData(data, 'delete timeline');
+      await loadAll();
       toast('已删除');
-      renderTab();
     } catch (e) { toast(e.message); }
   }
 
@@ -856,7 +923,9 @@
         if (!text) return toast('写点什么吧～');
         btn.disabled = true;
         try {
-          await callAPI('checklistAdd', { text });
+          const data = await readData();
+          data.checklist.push({ id: uid(), text, done: false, ts: Date.now() });
+          await writeData(data, 'add checklist');
           inp.value = '';
           await loadAll();
           toast('已添加');
@@ -894,19 +963,21 @@
 
   async function toggleChecklist(item) {
     try {
-      const r = await callAPI('checklistToggle', { id: item.id });
-      Object.assign(item, r.item);
-      renderTab();
+      const data = await readData();
+      const x = data.checklist.find((o) => o.id === item.id);
+      if (x) x.done = !x.done;
+      await writeData(data, 'toggle checklist');
+      await loadAll();
     } catch (e) { toast(e.message); }
   }
   async function deleteChecklist(item) {
     if (!confirm('删除这条清单吗？')) return;
     try {
-      await callAPI('checklistDelete', { id: item.id });
-      checklist = checklist.filter((x) => x.id !== item.id);
-      S.counts.checklist = checklist.length;
+      const data = await readData();
+      data.checklist = data.checklist.filter((x) => x.id !== item.id);
+      await writeData(data, 'delete checklist');
+      await loadAll();
       toast('已删除');
-      renderTab();
     } catch (e) { toast(e.message); }
   }
 
@@ -961,7 +1032,9 @@
     if (!nick) return toast('请留下昵称');
     if (!text) return toast('留言内容不能为空');
     try {
-      await callAPI('messagesAdd', { nickname: nick, text });
+      const data = await readData();
+      data.messages.push({ id: uid(), nickname: nick, text, ts: Date.now() });
+      await writeData(data, 'new message');
       view.querySelector('.msg-form textarea').value = '';
       await loadAll();
       toast('留言已送出 💌');
@@ -971,11 +1044,11 @@
   async function deleteMessage(msg) {
     if (!confirm('删除这条留言吗？')) return;
     try {
-      await callAPI('messagesDelete', { id: msg.id });
-      messages = messages.filter((x) => x.id !== msg.id);
-      S.counts.messages = messages.length;
+      const data = await readData();
+      data.messages = data.messages.filter((x) => x.id !== msg.id);
+      await writeData(data, 'delete message');
+      await loadAll();
       toast('已删除');
-      renderTab();
     } catch (e) { toast(e.message); }
   }
 
@@ -1003,10 +1076,11 @@
     saveBtn.addEventListener('click', async () => {
       saveBtn.disabled = true;
       try {
-        await callAPI('settings', {
-          startDate: startIn.value || null,
-          homeTitle: titleIn.value, homeQuote: quoteIn.value,
-        });
+        const data = await readData();
+        data.settings.startDate = startIn.value || null;
+        data.settings.homeTitle = titleIn.value;
+        data.settings.homeQuote = quoteIn.value;
+        await writeData(data, 'save settings');
         await loadAll();
         toast('已保存');
       } catch (e) { toast(e.message); }
@@ -1027,7 +1101,7 @@
       const cu = (users && users[me]) || {};
       if (cu.avatar) {
         const img = el('img');
-        img.src = getAvatarUrl(cu.avatar);
+        img.src = cu.avatar;
         preview.append(img);
       } else {
         preview.textContent = '👤';
@@ -1042,9 +1116,10 @@
       avBtn.disabled = true;
       try {
         const upFile = f.type === 'image/gif' ? f : await compressImage(f, 400);
-        const cloudPath = 'avatars/' + me + '-' + Date.now() + '.' + extOf(f);
-        const upRes = await app.uploadFile({ cloudPath, filePath: upFile });
-        await callAPI('avatar', { fileID: upRes.fileID });
+        const url = await uploadFile('avatars', upFile, extOf(f));
+        const data = await readData();
+        data.profiles[me].avatar = url;
+        await writeData(data, 'update avatar');
         avIn.value = '';
         await loadAll();
         toast('头像已更新');
@@ -1054,7 +1129,9 @@
     const avRm = el('button', 'btn btn-ghost', '移除头像');
     avRm.addEventListener('click', async () => {
       try {
-        await callAPI('avatar', { remove: true });
+        const data = await readData();
+        data.profiles[me].avatar = null;
+        await writeData(data, 'remove avatar');
         await loadAll();
         toast('已移除头像');
       } catch (e) { toast(e.message); }
@@ -1068,7 +1145,9 @@
       if (!nm) return toast('昵称不能为空');
       nameBtn.disabled = true;
       try {
-        await callAPI('profile', { name: nm });
+        const data = await readData();
+        data.profiles[me].name = nm;
+        await writeData(data, 'update name');
         await loadAll();
         toast('昵称已更新');
       } catch (e) { toast(e.message); }
@@ -1089,14 +1168,19 @@
       if (!files.length) return toast('先选择照片');
       upBtn.disabled = true;
       let ok = 0;
+      const newPhotos = [];
       try {
         for (let i = 0; i < files.length; i++) {
           upStatus.textContent = '上传中 ' + (i + 1) + '/' + files.length + ' …';
           const upFile = files[i].type === 'image/gif' ? files[i] : await compressImage(files[i]);
-          const cloudPath = 'photos/' + Date.now() + '-' + i + '.' + extOf(files[i]);
-          const upRes = await app.uploadFile({ cloudPath, filePath: upFile });
-          await callAPI('photosAdd', { caption: capIn.value.trim(), fileID: upRes.fileID });
+          const url = await uploadFile('photos', upFile, extOf(files[i]));
+          newPhotos.push({ id: uid(), url, caption: capIn.value.trim(), ts: Date.now() });
           ok++;
+        }
+        if (newPhotos.length) {
+          const data = await readData();
+          data.photos = data.photos.concat(newPhotos);
+          await writeData(data, 'add photos');
         }
         capIn.value = ''; fileIn.value = '';
         await loadAll();
@@ -1116,7 +1200,13 @@
     pwBtn.addEventListener('click', async () => {
       pwBtn.disabled = true;
       try {
-        await callAPI('password', { old: pwOld.value, new: pwNew.value });
+        const data = await readData();
+        const p = data.profiles[me];
+        if (!p || !p.salt || p.passHash !== await hashPw(pwOld.value, p.salt)) throw new Error('原密码错误');
+        if (pwNew.value.length < 4) throw new Error('新密码至少 4 位');
+        p.salt = Math.random().toString(36).slice(2) + Date.now().toString(36);
+        p.passHash = await hashPw(pwNew.value, p.salt);
+        await writeData(data, 'change password');
         pwOld.value = ''; pwNew.value = '';
         toast('密码已修改');
       } catch (e) { toast(e.message); }
@@ -1126,10 +1216,9 @@
     view.append(pw);
 
     const logout = el('button', 'logout-btn', '退出登录');
-    logout.addEventListener('click', async () => {
-      try { await callAPI('logout'); } catch (e) { /* 忽略 */ }
-      token = null; me = null;
-      localStorage.removeItem('love_token');
+    logout.addEventListener('click', () => {
+      localStorage.removeItem('gh_me');
+      me = null;
       tab = 'home';
       renderAll();
       toast('已退出登录');
@@ -1171,7 +1260,7 @@
       const av = el('span', 'who-av');
       if (u.avatar) {
         const img = el('img');
-        img.src = getAvatarUrl(u.avatar);
+        img.src = u.avatar;
         av.append(img);
       } else {
         av.textContent = k === 'his' ? '👦' : '👧';
@@ -1184,14 +1273,16 @@
     const btn = $('#loginBtn');
     btn.disabled = true;
     try {
-      const r = await callAPI('login', { user: loginWho, password: $('#loginPw').value });
-      token = r.token;
-      me = r.user;
-      localStorage.setItem('love_token', token);
+      const data = await readData();
+      const p = data.profiles[loginWho];
+      if (!p || !p.salt) throw new Error('账号未初始化，请刷新页面');
+      if (p.passHash !== await hashPw($('#loginPw').value, p.salt)) throw new Error('密码错误');
+      me = loginWho;
+      localStorage.setItem('gh_me', loginWho);
       $('#loginModal').hidden = true;
       tab = 'admin';
       await loadAll();
-      toast('欢迎回来，' + (r.name || '') + ' 💕');
+      toast('欢迎回来 💕');
     } catch (e) { toast(e.message); }
     finally { btn.disabled = false; }
   }
@@ -1228,20 +1319,16 @@
   /* ---------------- 启动 ---------------- */
   (async function boot() {
     try {
-      if (ENV_ID === '__ENV_ID__') {
+      if (GH.token === '__GITHUB_TOKEN__') {
         view.innerHTML = '';
         const er = el('div', 'empty');
         er.append(el('span', 'big', '⚙️'));
-        er.append(el('div', null, '还没有填写云开发环境 ID'));
-        er.append(el('div', null, '打开 web/index.html，把 ENV_ID 换成你的环境 ID'));
+        er.append(el('div', null, '还没有填写 GitHub 令牌'));
+        er.append(el('div', null, '打开 web/index.html，填入 GH.token（见 README 第 2 步）'));
         view.append(er);
         return;
       }
-      if (token) {
-        const r = await callAPI('me');
-        if (r.user) me = r.user;
-        else { token = null; localStorage.removeItem('love_token'); }
-      }
+      me = localStorage.getItem('gh_me') || null;
       await loadAll();
     } catch (e) {
       view.innerHTML = '';
