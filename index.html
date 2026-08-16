@@ -30,6 +30,7 @@
     background-attachment: fixed;
     color: var(--text);
     min-height: 100vh;
+    touch-action: manipulation;
   }
   /* 柔和光斑背景 */
   body::before, body::after {
@@ -502,6 +503,17 @@
   };
   const GH_API = 'https://api.github.com/repos/' + GH.owner + '/' + GH.repo + '/contents';
   const GH_RAW = 'https://raw.githubusercontent.com/' + GH.owner + '/' + GH.repo + '/' + GH.branch;
+  // 图片加速：raw.githubusercontent 在国内慢，优先走 jsdelivr CDN（失败自动回退原地址）
+  function fastUrl(u) {
+    if (!u) return '';
+    const from = 'raw.githubusercontent.com/' + GH.owner + '/' + GH.repo + '/' + GH.branch + '/';
+    const i = u.indexOf(from);
+    if (i < 0) return u;
+    return 'https://cdn.jsdelivr.net/gh/' + GH.owner + '/' + GH.repo + '@' + GH.branch + '/' + u.slice(i + from.length);
+  }
+  function imgFallback(img, orig) {
+    img.onerror = () => { if (img.src !== orig && orig) img.src = orig; };
+  }
   const DATA_PATH = 'data.json';
 
   function b64Encode(str) { return btoa(unescape(encodeURIComponent(str))); }
@@ -565,7 +577,11 @@
     const f = await ghRead(DATA_PATH);
     if (!f) { dbSha = null; return defaultData(); }
     dbSha = f.sha;
-    try { return Object.assign(defaultData(), JSON.parse(f.text)); } catch (e) { return defaultData(); }
+    try {
+      const data = Object.assign(defaultData(), JSON.parse(f.text));
+      try { localStorage.setItem('gh_data_cache', JSON.stringify(data)); } catch (e) { /* 忽略 */ }
+      return data;
+    } catch (e) { return defaultData(); }
   }
 
   // 写全部数据（用缓存的 sha，避免每次写前都读一次）
@@ -591,6 +607,7 @@
   async function persistData(message) {
     if (!dbCache) dbCache = await readData();
     await writeData(dbCache, message || 'update');
+    try { localStorage.setItem('gh_data_cache', JSON.stringify(dbCache)); } catch (e) { /* 忽略 */ }
   }
 
   // 访客点赞切换（返回是否已赞）
@@ -628,6 +645,22 @@
   }
 
   /* ---------------- 加载与渲染 ---------------- */
+  function applyData(data) {
+    const settings = data.settings || {};
+    S = {
+      settings: { startDate: settings.startDate, homeTitle: settings.homeTitle, homeQuote: settings.homeQuote },
+      counts: { timeline: data.timeline.length, photos: data.photos.length, checklist: data.checklist.length, messages: data.messages.length },
+    };
+    users = {
+      his: { name: (data.profiles.his && data.profiles.his.name) || '他', avatar: (data.profiles.his && data.profiles.his.avatar) || null },
+      her: { name: (data.profiles.her && data.profiles.her.name) || '她', avatar: (data.profiles.her && data.profiles.her.avatar) || null },
+    };
+    timeline = data.timeline.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.ts - a.ts));
+    photos = data.photos.slice().sort((a, b) => b.ts - a.ts);
+    checklist = data.checklist.slice().sort((a, b) => (a.done === b.done ? b.ts - a.ts : a.done ? 1 : -1));
+    messages = data.messages.slice().sort((a, b) => b.ts - a.ts);
+  }
+
   async function loadAll() {
     const data = await readData();
     dbCache = data;
@@ -642,20 +675,7 @@
       }
     }
     if (changed) await writeData(data, 'init accounts');
-
-    const settings = data.settings || {};
-    S = {
-      settings: { startDate: settings.startDate, homeTitle: settings.homeTitle, homeQuote: settings.homeQuote },
-      counts: { timeline: data.timeline.length, photos: data.photos.length, checklist: data.checklist.length, messages: data.messages.length },
-    };
-    users = {
-      his: { name: (data.profiles.his && data.profiles.his.name) || '他', avatar: (data.profiles.his && data.profiles.his.avatar) || null },
-      her: { name: (data.profiles.her && data.profiles.her.name) || '她', avatar: (data.profiles.her && data.profiles.her.avatar) || null },
-    };
-    timeline = data.timeline.slice().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.ts - a.ts));
-    photos = data.photos.slice().sort((a, b) => b.ts - a.ts);
-    checklist = data.checklist.slice().sort((a, b) => (a.done === b.done ? b.ts - a.ts : a.done ? 1 : -1));
-    messages = data.messages.slice().sort((a, b) => b.ts - a.ts);
+    applyData(data);
     renderAll();
   }
 
@@ -740,7 +760,8 @@
     const wrap = el('div', 'avatar-wrap');
     if (user && user.avatar) {
       const img = el('img', 'avatar-img');
-      img.src = user.avatar;
+      img.src = fastUrl(user.avatar);
+      imgFallback(img, user.avatar);
       wrap.append(img);
     } else {
       wrap.append(el('div', 'avatar-img placeholder', user && user.name ? user.name.slice(0, 1) : '?'));
@@ -869,9 +890,10 @@
       for (const p of byYear[y]) {
         const item = el('div', 'photo-item');
         const img = el('img');
-        img.src = p.url;
+        img.src = fastUrl(p.url);
         img.alt = p.caption || '';
         img.loading = 'lazy';
+        imgFallback(img, p.url);
         img.addEventListener('click', () => openLightbox(p));
         item.append(img);
         if (me) {
@@ -890,7 +912,8 @@
   let lbPhoto = null;   // 当前灯箱显示的照片
   function openLightbox(p) {
     lbPhoto = p || null;
-    $('#lbImg').src = p.url;
+    $('#lbImg').src = fastUrl(p.url);
+    imgFallback($('#lbImg'), p.url);
     $('#lbCaption').textContent = p.caption || '';
     renderLbInteract();
     $('#lightbox').hidden = false;
@@ -1306,7 +1329,8 @@
       const cu = (users && users[me]) || {};
       if (cu.avatar) {
         const img = el('img');
-        img.src = cu.avatar;
+        img.src = fastUrl(cu.avatar);
+        imgFallback(img, cu.avatar);
         preview.append(img);
       } else {
         preview.textContent = '👤';
@@ -1377,7 +1401,7 @@
       try {
         for (let i = 0; i < files.length; i++) {
           upStatus.textContent = '上传中 ' + (i + 1) + '/' + files.length + ' …';
-          const upFile = files[i].type === 'image/gif' ? files[i] : await compressImage(files[i]);
+          const upFile = files[i].type === 'image/gif' ? files[i] : await compressImage(files[i], 1280);
           const url = await uploadFile('photos', upFile, extOf(files[i]));
           newPhotos.push({ id: uid(), url, caption: capIn.value.trim(), ts: Date.now() });
           ok++;
@@ -1465,7 +1489,8 @@
       const av = el('span', 'who-av');
       if (u.avatar) {
         const img = el('img');
-        img.src = u.avatar;
+        img.src = fastUrl(u.avatar);
+        imgFallback(img, u.avatar);
         av.append(img);
       } else {
         av.textContent = k === 'his' ? '👦' : '👧';
@@ -1544,18 +1569,32 @@
         return;
       }
       me = localStorage.getItem('gh_me') || null;
-      // 先显示加载提示，避免白屏等待
-      const loading = el('div', 'empty');
-      loading.append(el('span', 'big', '💕'));
-      loading.append(el('div', null, '正在加载…'));
-      view.append(loading);
+      // 有本地缓存就先秒开（上次的数据），没有则显示加载提示；后台再拉最新
+      const cacheRaw = localStorage.getItem('gh_data_cache');
+      if (cacheRaw) {
+        try {
+          dbCache = JSON.parse(cacheRaw);
+          applyData(dbCache);
+          renderAll();
+        } catch (e) { /* 缓存损坏忽略 */ }
+      }
+      if (!dbCache) {
+        const loading = el('div', 'empty');
+        loading.append(el('span', 'big', '💕'));
+        loading.append(el('div', null, '正在加载…'));
+        view.append(loading);
+      }
       await loadAll();
     } catch (e) {
-      view.innerHTML = '';
-      const er = el('div', 'empty');
-      er.append(el('span', 'big', '😢'));
-      er.append(el('div', null, '加载失败：' + e.message));
-      view.append(er);
+      if (!dbCache) {
+        view.innerHTML = '';
+        const er = el('div', 'empty');
+        er.append(el('span', 'big', '😢'));
+        er.append(el('div', null, '加载失败：' + e.message));
+        view.append(er);
+      } else {
+        toast('刷新失败：' + e.message);
+      }
     }
   })();
 })();
