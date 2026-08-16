@@ -291,6 +291,7 @@
   .cl-item.done .cl-circle { background: linear-gradient(135deg, #ff8fab, #e0537e); border-color: transparent; }
   .cl-item.done .cl-text { text-decoration: line-through; color: var(--muted); }
   .cl-text { flex: 1; font-size: 15px; line-height: 1.5; }
+  .cl-author { font-size: 11px; color: var(--muted); flex-shrink: 0; }
 
   /* 留言板 */
   .msg-form {
@@ -615,6 +616,12 @@
     const i = arr.indexOf(visitorId);
     if (i >= 0) arr.splice(i, 1); else arr.push(visitorId);
     return i < 0;
+  }
+
+  // 账号显示名（登录的是哪个账号就显示哪个名字）
+  function creatorName(key) {
+    if (users && users[key] && users[key].name) return users[key].name;
+    return key === 'her' ? '她' : '他';
   }
 
   // 密码哈希（浏览器 Web Crypto）
@@ -994,7 +1001,7 @@
         if (!text) return toast('写点什么吧～');
         btn.disabled = true;
         try {
-          const item = { id: uid(), text, date: dateIn.value, ts: Date.now() };
+          const item = { id: uid(), text, date: dateIn.value, ts: Date.now(), creator: me || null };
           ta.value = '';
           timeline.unshift(item);
           if (dbCache) dbCache.timeline.push(item);
@@ -1020,7 +1027,7 @@
     const tl = el('div', 'timeline');
     for (const item of timeline) {
       const row = el('div', 'tl-item');
-      row.append(el('div', 'tl-date', item.date.replace(/-/g, '.')));
+      row.append(el('div', 'tl-date', item.date.replace(/-/g, '.') + (item.creator ? ' · ' + creatorName(item.creator) : '')));
       const inner = el('div', 'tl-row');
       inner.append(el('div', 'tl-text', item.text));
       const tLikes = item.likes || (item.likes = []);
@@ -1072,7 +1079,7 @@
         if (!text) return toast('写点什么吧～');
         btn.disabled = true;
         try {
-          const item = { id: uid(), text, done: false, ts: Date.now() };
+          const item = { id: uid(), text, done: false, ts: Date.now(), creator: me || null };
           inp.value = '';
           checklist.unshift(item);
           if (dbCache) dbCache.checklist.push(item);
@@ -1102,6 +1109,7 @@
       li.dataset.id = item.id;
       const circle = el('div', 'cl-circle', item.done ? '✓' : '');
       li.append(circle, el('span', 'cl-text', item.text));
+      if (item.creator) li.append(el('span', 'cl-author', creatorName(item.creator)));
       const cLikes = item.likes || (item.likes = []);
       const cLikeBtn = el('button', 'tl-like' + (cLikes.indexOf(visitorId) >= 0 ? ' liked' : ''), '❤️ ' + cLikes.length);
       cLikeBtn.addEventListener('click', (e) => {
@@ -1252,7 +1260,7 @@
 
   async function submitMessage(e) {
     e.preventDefault();
-    const nick = view.querySelector('.msg-form input').value.trim();
+    const nick = view.querySelector('.msg-form input').value.trim() || (me ? creatorName(me) : '');
     const text = view.querySelector('.msg-form textarea').value.trim();
     if (!nick) return toast('请留下昵称');
     if (!text) return toast('留言内容不能为空');
