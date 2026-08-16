@@ -57,7 +57,7 @@
     -webkit-background-clip: text; background-clip: text; color: transparent;
   }
 
-  .view { max-width: 560px; margin: 0 auto; padding: 10px 14px 100px; }
+  .view { max-width: 560px; margin: 0 auto; padding: 10px 14px 100px; min-height: calc(100vh - 130px); }
 
   /* 底部导航 */
   .tabbar {
@@ -673,7 +673,7 @@
     document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   }
 
-  function switchTab(t) { tab = t; renderTab(); }
+  function switchTab(t) { tab = t; renderTab(); window.scrollTo(0, 0); }
 
   function avatarEl(user) {
     const wrap = el('div', 'avatar-wrap');
@@ -1062,7 +1062,7 @@
 
   /* ---------------- 管理后台 ---------------- */
   function openAdmin() {
-    if (me) { tab = 'admin'; renderTab(); }
+    if (me) { tab = 'admin'; renderTab(); window.scrollTo(0, 0); }
     else openLogin();
   }
 
