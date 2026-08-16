@@ -456,6 +456,7 @@
   let timeline = [], photos = [], checklist = [], messages = [];
   let tab = 'home';
   let loginWho = 'his';
+  let dbCache = null;              // 本地数据缓存（操作秒响应，后台再刷新）
 
   /* ---------------- GitHub 数据层（网页 + 数据全在 GitHub） ---------------- */
   // ⚠️ 部署前必改：填你的 GitHub 信息和令牌
@@ -567,6 +568,7 @@
   /* ---------------- 加载与渲染 ---------------- */
   async function loadAll() {
     const data = await readData();
+    dbCache = data;
     // 首次运行：给两个账号设置默认密码 5201314
     let changed = false;
     for (const key of ['his', 'her']) {
@@ -833,7 +835,7 @@
   async function deletePhoto(p) {
     if (!confirm('删除这张照片吗？')) return;
     try {
-      const data = await readData();
+      const data = dbCache || await readData();
       data.photos = data.photos.filter((x) => x.id !== p.id);
       await writeData(data, 'delete photo');
       await loadAll();
@@ -862,7 +864,7 @@
         if (!text) return toast('写点什么吧～');
         btn.disabled = true;
         try {
-          const data = await readData();
+          const data = dbCache || await readData();
           data.timeline.push({ id: uid(), text, date: dateIn.value, ts: Date.now() });
           await writeData(data, 'add timeline');
           ta.value = '';
@@ -903,7 +905,7 @@
   async function deleteTimeline(item) {
     if (!confirm('删除这条记录吗？')) return;
     try {
-      const data = await readData();
+      const data = dbCache || await readData();
       data.timeline = data.timeline.filter((x) => x.id !== item.id);
       await writeData(data, 'delete timeline');
       await loadAll();
@@ -929,7 +931,7 @@
         if (!text) return toast('写点什么吧～');
         btn.disabled = true;
         try {
-          const data = await readData();
+          const data = dbCache || await readData();
           data.checklist.push({ id: uid(), text, done: false, ts: Date.now() });
           await writeData(data, 'add checklist');
           inp.value = '';
@@ -969,7 +971,7 @@
 
   async function toggleChecklist(item) {
     try {
-      const data = await readData();
+      const data = dbCache || await readData();
       const x = data.checklist.find((o) => o.id === item.id);
       if (x) x.done = !x.done;
       await writeData(data, 'toggle checklist');
@@ -979,7 +981,7 @@
   async function deleteChecklist(item) {
     if (!confirm('删除这条清单吗？')) return;
     try {
-      const data = await readData();
+      const data = dbCache || await readData();
       data.checklist = data.checklist.filter((x) => x.id !== item.id);
       await writeData(data, 'delete checklist');
       await loadAll();
@@ -1038,7 +1040,7 @@
     if (!nick) return toast('请留下昵称');
     if (!text) return toast('留言内容不能为空');
     try {
-      const data = await readData();
+      const data = dbCache || await readData();
       data.messages.push({ id: uid(), nickname: nick, text, ts: Date.now() });
       await writeData(data, 'new message');
       view.querySelector('.msg-form textarea').value = '';
@@ -1050,7 +1052,7 @@
   async function deleteMessage(msg) {
     if (!confirm('删除这条留言吗？')) return;
     try {
-      const data = await readData();
+      const data = dbCache || await readData();
       data.messages = data.messages.filter((x) => x.id !== msg.id);
       await writeData(data, 'delete message');
       await loadAll();
@@ -1082,7 +1084,7 @@
     saveBtn.addEventListener('click', async () => {
       saveBtn.disabled = true;
       try {
-        const data = await readData();
+        const data = dbCache || await readData();
         data.settings.startDate = startIn.value || null;
         data.settings.homeTitle = titleIn.value;
         data.settings.homeQuote = quoteIn.value;
@@ -1123,7 +1125,7 @@
       try {
         const upFile = f.type === 'image/gif' ? f : await compressImage(f, 400);
         const url = await uploadFile('avatars', upFile, extOf(f));
-        const data = await readData();
+        const data = dbCache || await readData();
         data.profiles[me].avatar = url;
         await writeData(data, 'update avatar');
         avIn.value = '';
@@ -1135,7 +1137,7 @@
     const avRm = el('button', 'btn btn-ghost', '移除头像');
     avRm.addEventListener('click', async () => {
       try {
-        const data = await readData();
+        const data = dbCache || await readData();
         data.profiles[me].avatar = null;
         await writeData(data, 'remove avatar');
         await loadAll();
@@ -1151,7 +1153,7 @@
       if (!nm) return toast('昵称不能为空');
       nameBtn.disabled = true;
       try {
-        const data = await readData();
+        const data = dbCache || await readData();
         data.profiles[me].name = nm;
         await writeData(data, 'update name');
         await loadAll();
@@ -1184,7 +1186,7 @@
           ok++;
         }
         if (newPhotos.length) {
-          const data = await readData();
+          const data = dbCache || await readData();
           data.photos = data.photos.concat(newPhotos);
           await writeData(data, 'add photos');
         }
@@ -1206,7 +1208,7 @@
     pwBtn.addEventListener('click', async () => {
       pwBtn.disabled = true;
       try {
-        const data = await readData();
+        const data = dbCache || await readData();
         const p = data.profiles[me];
         if (!p || !p.salt || p.passHash !== await hashPw(pwOld.value, p.salt)) throw new Error('原密码错误');
         if (pwNew.value.length < 4) throw new Error('新密码至少 4 位');
@@ -1279,7 +1281,7 @@
     const btn = $('#loginBtn');
     btn.disabled = true;
     try {
-      const data = await readData();
+      const data = dbCache || await readData();
       const p = data.profiles[loginWho];
       if (!p || !p.salt) throw new Error('账号未初始化，请刷新页面');
       if (p.passHash !== await hashPw($('#loginPw').value, p.salt)) throw new Error('密码错误');
@@ -1287,8 +1289,9 @@
       localStorage.setItem('gh_me', loginWho);
       $('#loginModal').hidden = true;
       tab = 'admin';
-      await loadAll();
+      renderTab();                        // 立即显示管理页（用缓存数据，秒开）
       toast('欢迎回来 💕');
+      loadAll().catch(() => { /* 后台静默刷新 */ });  // 后台拉最新数据
     } catch (e) { toast(e.message); }
     finally { btn.disabled = false; }
   }
@@ -1335,6 +1338,11 @@
         return;
       }
       me = localStorage.getItem('gh_me') || null;
+      // 先显示加载提示，避免白屏等待
+      const loading = el('div', 'empty');
+      loading.append(el('span', 'big', '💕'));
+      loading.append(el('div', null, '正在加载…'));
+      view.append(loading);
       await loadAll();
     } catch (e) {
       view.innerHTML = '';
