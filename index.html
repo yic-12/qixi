@@ -90,6 +90,7 @@
     background: linear-gradient(180deg, var(--accent2), var(--accent));
   }
   .section-head h2 { font-size: 20px; font-family: "Noto Serif SC", "Songti SC", serif; letter-spacing: 1px; }
+  .tl-title { font-size: 17px; line-height: 1.6; }
   .section-head span { font-size: 12px; color: var(--muted); }
   .card {
     background: var(--card); border-radius: var(--radius);
@@ -847,7 +848,7 @@
   function renderTimeline() {
     view.innerHTML = '';
     const head = el('div', 'section-head');
-    head.append(el('h2', null, '点点滴滴'), el('span', null, '我们的故事'));
+    head.append(el('h2', 'tl-title', '总有些惊奇的际遇，比方说当我遇见你'));
     view.append(head);
 
     if (me) {
