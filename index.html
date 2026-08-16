@@ -208,6 +208,7 @@
   .nc-ico-c { background: linear-gradient(135deg, #fff1e0, #ffddb5); }
   .nc-ico-d { background: linear-gradient(135deg, #e9fbe9, #d2f4d6); }
   .nc-name { font-size: 15px; font-weight: 700; }
+  .nc-sub { font-size: 11px; color: var(--muted); margin-top: 3px; line-height: 1.5; padding: 0 4px; }
   .nc-count {
     display: inline-block; margin-top: 6px; font-size: 11px; color: var(--accent-deep);
     background: #ffe9f0; padding: 2px 10px; border-radius: 999px;
@@ -724,11 +725,22 @@
       ['checklist', '🎯', '恋爱清单', S.counts.checklist],
       ['messages', '💌', '留言板', S.counts.messages],
     ];
+    const subs = {
+      photos: '记录最美的瞬间',
+      timeline: '有人愿意听你碎碎念',
+      checklist: '你我之间的约定',
+      messages: '在这里写下我们的祝福',
+    };
     const icoCls = ['nc-ico-a', 'nc-ico-b', 'nc-ico-c', 'nc-ico-d'];
     cards.forEach(([t, ico, name, count], i) => {
       const c = el('a', 'nav-card');
       c.href = 'javascript:void(0)';
-      c.append(el('div', 'nc-ico ' + icoCls[i % 4], ico), el('div', 'nc-name', name), el('div', 'nc-count', count + ' 条'));
+      c.append(
+        el('div', 'nc-ico ' + icoCls[i % 4], ico),
+        el('div', 'nc-name', name),
+        el('div', 'nc-sub', subs[t] || ''),
+        el('div', 'nc-count', count + ' 条')
+      );
       c.addEventListener('click', () => switchTab(t));
       grid.append(c);
     });
