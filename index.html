@@ -943,6 +943,7 @@
       if (me) {
         const x = el('button', 'del-btn', '✕');
         x.addEventListener('click', async () => {
+          if (!confirm('确定删除这条评论吗？')) return;
           p.comments = p.comments.filter((y) => y.id !== c.id);
           renderLbInteract();
           try { await persistData('delete photo comment'); } catch (e) { toast('保存失败：' + e.message); }
@@ -1221,6 +1222,7 @@
       if (me) {
         const x = el('button', 'del-btn', '✕');
         x.addEventListener('click', async () => {
+          if (!confirm('确定删除这条评论吗？')) return;
           msg.comments = msg.comments.filter((y) => y.id !== c.id);
           renderMsgComments(msg, box, commentBtn);
           if (commentBtn) commentBtn.textContent = '💬 ' + msg.comments.length;
