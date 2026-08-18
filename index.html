@@ -972,13 +972,13 @@
 
   async function deletePhoto(p) {
     if (!confirm('删除这张照片吗？')) return;
-    try {
-      const data = dbCache || await readData();
-      data.photos = data.photos.filter((x) => x.id !== p.id);
-      await writeData(data, 'delete photo');
-      await loadAll();
-      toast('已删除');
-    } catch (e) { toast(e.message); }
+    photos = photos.filter((x) => x.id !== p.id);
+    if (dbCache) dbCache.photos = dbCache.photos.filter((x) => x.id !== p.id);
+    S.counts.photos = photos.length;
+    toast('已删除');
+    renderPhotos();
+    try { await persistData('delete photo'); }
+    catch (e) { toast('删除同步失败：' + e.message); await loadAll().catch(() => {}); }
   }
 
   /* ---------------- 时间线 ---------------- */
