@@ -108,6 +108,19 @@
   .btn:active { transform: scale(.95); box-shadow: 0 2px 8px rgba(224,83,126,.3); }
   .btn:disabled { opacity: .5; }
   .btn-ghost { background: linear-gradient(135deg, #ffe9f0, #ffdde8); color: var(--accent-deep); box-shadow: none; }
+
+  /* 返回主页：显示在每个子页面的最上方 */
+  .back-home {
+    display: inline-flex; align-items: center;
+    margin: 4px 0 12px; padding: 8px 16px;
+    border: 1px solid rgba(255,214,226,.9);
+    background: linear-gradient(135deg, #ffe9f0, #ffdde8);
+    color: var(--accent-deep); border-radius: 999px;
+    font-size: 13px; font-weight: 600; letter-spacing: .5px;
+    box-shadow: 0 3px 12px rgba(224,83,126,.14);
+    transition: transform .15s, box-shadow .15s;
+  }
+  .back-home:active { transform: scale(.95); box-shadow: 0 2px 8px rgba(224,83,126,.26); }
   input[type=text], input[type=password], input[type=date], textarea {
     width: 100%; border: 1px solid var(--line); border-radius: 12px;
     padding: 11px 13px; font-size: 15px; font-family: inherit; outline: none;
@@ -757,8 +770,20 @@
 
   function renderTab() {
     const map = { home: renderHome, photos: renderPhotos, timeline: renderTimeline, checklist: renderChecklist, messages: renderMessages, admin: renderAdmin };
-    (map[tab] || renderHome)();
+    const cur = map[tab] ? tab : 'home';
+    map[cur]();
+    // 每个子页面最上方都放一个「返回主页」，首页不需要
+    if (cur !== 'home') view.insertBefore(backHomeBtn(), view.firstChild);
     document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  }
+
+  // 「返回主页」按钮：点了就回到首页
+  function backHomeBtn() {
+    const b = el('button', 'back-home', '← 返回主页');
+    b.type = 'button';
+    b.setAttribute('aria-label', '返回主页');
+    b.addEventListener('click', () => switchTab('home'));
+    return b;
   }
 
   function switchTab(t) { tab = t; renderTab(); window.scrollTo(0, 0); }
